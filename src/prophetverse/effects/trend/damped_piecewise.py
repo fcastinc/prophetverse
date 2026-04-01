@@ -70,7 +70,7 @@ class DampedPiecewiseLinearTrendV3(PiecewiseLinearTrend):
         changepoint_prior_scale: float = 0.001,
         offset_prior_scale: float = 0.1,
         damping_factor: float = 0.998,
-        damping_beta_a: float = 30.0,
+        damping_beta_a: float = 100.0,
         damping_beta_b: float = 1.0,
         learn_damping: bool = True,
         remove_seasonality_before_suggesting_initial_vals: bool = True,
