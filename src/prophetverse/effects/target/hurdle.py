@@ -86,6 +86,11 @@ class HurdleTargetLikelihood(BaseTargetEffect):
 
     def _fit(self, y, X, scale=1):
         self.scale_ = scale
+        # Ensure scale is JAX-compatible for broadcast_mode="effect"
+        if isinstance(self.scale_, (pd.Series, pd.DataFrame)):
+            self.scale_ = jnp.array(
+                self.scale_.values.reshape((-1, 1, 1))
+            )
 
     def _predict(
         self,
@@ -156,13 +161,21 @@ class HurdleTargetLikelihood(BaseTargetEffect):
 
         truncated = TruncatedDiscrete(dist_nonzero, low=0)
 
-        with numpyro.plate("data", len(demand), dim=-2):
-
-            samples = numpyro.sample(
-                "obs",
-                HurdleDistribution(gate_prob, truncated),
-                obs=data,
-            )
+        if demand.ndim <= 2:
+            with numpyro.plate("data", len(demand), dim=-2):
+                samples = numpyro.sample(
+                    "obs",
+                    HurdleDistribution(gate_prob, truncated),
+                    obs=data,
+                )
+        else:
+            with numpyro.plate("series", demand.shape[0], dim=-3):
+                with numpyro.plate("data", demand.shape[1], dim=-2):
+                    samples = numpyro.sample(
+                        "obs",
+                        HurdleDistribution(gate_prob, truncated),
+                        obs=data,
+                    )
 
         numpyro.deterministic("gate", gate_prob)
         numpyro.deterministic("demand", demand)
