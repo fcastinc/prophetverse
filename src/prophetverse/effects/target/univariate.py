@@ -171,13 +171,36 @@ class NegativeBinomialTargetLikelihood(TargetLikelihood):
         return jnp.zeros_like(mean)
 
 
+class _PositiveSmoothClipper:
+    """Picklable replacement for lambda-based clipper.
+
+    The original _build_positive_smooth_clipper returned a closure that
+    captures smooth_threshold — closures can't be pickled across processes.
+    This class-based callable is functionally identical but picklable.
+    """
+
+    def __init__(self, smooth_threshold, threshold=1e-10):
+        self.smooth_threshold = smooth_threshold
+        self.threshold = threshold
+
+    def __call__(self, x):
+        return jnp.clip(
+            jnp.where(
+                x < self.smooth_threshold,
+                jnp.exp(x - self.smooth_threshold) * self.smooth_threshold,
+                x,
+            ),
+            self.threshold,
+            None,
+        )
+
+
 def _build_positive_smooth_clipper(
     smooth_threshold: float, threshold: float = 1e-10
-) -> Callable[[jnp.ndarray], jnp.ndarray]:
+) -> _PositiveSmoothClipper:
     """Force the values of x to be positive.
 
-    Applies a smooth threshold to the values of x to force positive-only outputs.
-    Further clips the values of x to avoid zeros due to numerical precision.
+    Returns a picklable callable instead of a closure.
 
     Parameters
     ----------
@@ -188,22 +211,10 @@ def _build_positive_smooth_clipper(
 
     Returns
     -------
-    jnp.ndarray
-        The transformed array.
+    _PositiveSmoothClipper
+        Picklable callable that transforms values to be positive.
     """
-
-    def _to_positive(x):
-        return jnp.clip(
-            jnp.where(
-                x < smooth_threshold,
-                jnp.exp(x - smooth_threshold) * smooth_threshold,
-                x,
-            ),
-            threshold,
-            None,
-        )
-
-    return _to_positive
+    return _PositiveSmoothClipper(smooth_threshold, threshold)
 
 
 class BetaTargetLikelihood(TargetLikelihood):
