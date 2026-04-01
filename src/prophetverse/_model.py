@@ -60,8 +60,22 @@ def model(
         # Auxiliary integral observation — on the FULL model output.
         # Constrains cumsum(full_model) ≈ cumsum(y_observed).
         # Only active during training (y is not None).
-        # Only active if the trend requests it via _integral_obs_enabled flag.
-        if y is not None and getattr(trend_model, '_integral_obs_enabled', False):
+        # Only active if the trend requests it via integral_obs_enabled.
+        if y is not None and getattr(trend_model, 'integral_obs_enabled', False):
+            obs_dist_name = getattr(
+                trend_model, 'integral_obs_distribution', 'laplace')
+            noise_prior_scale = getattr(
+                trend_model, 'integral_obs_noise_scale', 1.0)
+            stride = getattr(
+                trend_model, 'integral_obs_subsample_stride', 4)
+
+            _INTEGRAL_OBS_DISTRIBUTIONS = {
+                "laplace": dist.Laplace,
+                "normal": dist.Normal,
+            }
+            obs_dist_cls = _INTEGRAL_OBS_DISTRIBUTIONS.get(
+                obs_dist_name, dist.Laplace)
+
             # Compute full model mean (same as likelihood does)
             full_mean = sum(
                 eff for name, eff in predicted_effects.items()
@@ -73,25 +87,19 @@ def model(
             model_cumsum = jnp.cumsum(full_mean_flat)
             obs_cumsum = jnp.cumsum(y_flat)
 
-            # Subsample every 4th point
+            # Subsample every Nth point
             n_obs = len(obs_cumsum)
-            sub = jnp.arange(3, n_obs, 4)
+            sub = jnp.arange(stride - 1, n_obs, stride)
 
-            # Laplace with constant scale — linear penalty for deviations.
-            # Tolerates spike-driven jumps better than Normal (linear vs
-            # quadratic cost), while still penalizing sustained drift.
-            _noise_prior_scale = getattr(
-                trend_model, '_integral_noise_prior_scale', 1.0,
-            )
             integral_noise = numpyro.sample(
                 "integral_noise_scale",
-                dist.HalfNormal(_noise_prior_scale),
+                dist.HalfNormal(noise_prior_scale),
             )
             mean_rate = obs_cumsum[-1] / n_obs
             scale = integral_noise * mean_rate + 1e-6
             numpyro.sample(
                 "integral_obs",
-                dist.Laplace(model_cumsum[sub], scale),
+                obs_dist_cls(model_cumsum[sub], scale),
                 obs=obs_cumsum[sub],
             )
 

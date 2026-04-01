@@ -4,6 +4,7 @@ from .base import TrendEffectMixin
 from .flat import FlatTrend
 from .piecewise import PiecewiseLinearTrend, PiecewiseLogisticTrend
 from .damped_piecewise import DampedPiecewiseLinearTrendV3
+from .dual_integral import DualIntegralTrend
 
 __all__ = [
     "TrendEffectMixin",
@@ -11,4 +12,5 @@ __all__ = [
     "PiecewiseLinearTrend",
     "PiecewiseLogisticTrend",
     "DampedPiecewiseLinearTrendV3",
+    "DualIntegralTrend",
 ]
