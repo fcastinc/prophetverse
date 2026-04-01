@@ -157,3 +157,36 @@ Best Optuna trials show:
 - But even the integral observation isn't tight enough — model integral consistently overshoots actual
 
 Products examined: KR Philly Light Cream, Borden Singles, KR American Singles — all show the same pattern of integral overshoot. Borden Singles has a "kick" (slope change ~1994) that piecewise linear handles well.
+
+## Experiment Results (2026-04-01)
+
+### NB 10a: Integral-only fit (trend + seasonality, no regressors)
+- Train R² > 0.999 for all series
+- Endpoint error: 0.3-3.4% (total demand over 26-week forecast)
+- **Proves: integral is easy to forecast, viable as budget**
+
+### NB 10c: Integral fit WITH regressors
+- Adding regressors (price, sales, macro) to cumulative fit makes it WORSE
+- Rate from integral diff shows wild oscillations and negative values
+- **Proves: regressors don't belong in the integral model**
+
+### NB 06: DualIntegralTrend (rate model with regressors)
+- Rate model captures spikes well (sale codes, promotions work)
+- But integral drifts (overshoots consistently)
+- **Proves: rate model gets pattern right but level wrong**
+
+### Conclusion
+- Integral model (trend-only) → reliable budget, 1-3% error
+- Rate model (with regressors) → correct spike pattern, wrong level
+- Neither alone is sufficient. Need joint model:
+  - Integral level: sets the budget (no regressors)
+  - Rate level: allocates budget across weeks (with regressors)
+  - Constraint: rates sum to budget per window
+
+### Key design revision
+- Softmax over full time range doesn't work (washes out to ~uniform)
+- Need **windowed** constraint: rates in each window sum to that window's budget
+- Window size = forecast horizon (e.g., 13 weeks)
+- Joint fit, not two-stage: one model, one posterior, shared uncertainty
+- Regressors + effects operate on logits (rate level only)
+- Integral parameters and rate parameters fit simultaneously
