@@ -72,14 +72,24 @@ class IntegralBudgetTrend(PiecewiseLinearTrend):
         mu_prior_scale_frac: float = 0.2,
         integral_damping_beta_a: float = 100.0,
         integral_damping_beta_b: float = 1.0,
+        # Budget constraint (softmax in _model.py)
         budget_constraint_enabled: bool = True,
         budget_window_size: int = 13,
+        # Integral observation (fits S(t) to actual cumsum)
+        integral_obs_enabled: bool = True,
+        integral_obs_distribution: str = "normal",
+        integral_obs_noise_scale: float = 1.0,
+        integral_obs_subsample_stride: int = 4,
     ):
         self.mu_prior_scale_frac = mu_prior_scale_frac
         self.integral_damping_beta_a = integral_damping_beta_a
         self.integral_damping_beta_b = integral_damping_beta_b
         self.budget_constraint_enabled = budget_constraint_enabled
         self.budget_window_size = budget_window_size
+        self.integral_obs_enabled = integral_obs_enabled
+        self.integral_obs_distribution = integral_obs_distribution
+        self.integral_obs_noise_scale = integral_obs_noise_scale
+        self.integral_obs_subsample_stride = integral_obs_subsample_stride
         super().__init__(
             changepoint_interval=changepoint_interval,
             changepoint_range=changepoint_range,
