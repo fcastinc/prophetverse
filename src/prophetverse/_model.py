@@ -1,4 +1,5 @@
 import numpyro
+import numpyro.distributions as dist
 from prophetverse.effects.base import BaseEffect
 from typing import Any, Dict, Optional
 import jax.numpy as jnp
@@ -55,5 +56,43 @@ def model(
 
                 effect = numpyro.deterministic(exog_effect_name, effect)
                 predicted_effects[exog_effect_name] = effect
+
+        # Auxiliary integral observation — on the FULL model output.
+        # Constrains cumsum(full_model) ≈ cumsum(y_observed).
+        # Only active during training (y is not None).
+        # Only active if the trend requests it via _integral_obs_enabled flag.
+        if y is not None and getattr(trend_model, '_integral_obs_enabled', False):
+            # Compute full model mean (same as likelihood does)
+            full_mean = sum(
+                eff for name, eff in predicted_effects.items()
+                if not name.startswith("latent/")
+            )
+            full_mean_flat = full_mean.flatten()
+            y_flat = y.flatten()
+
+            model_cumsum = jnp.cumsum(full_mean_flat)
+            obs_cumsum = jnp.cumsum(y_flat)
+
+            # Subsample every 4th point
+            n_obs = len(obs_cumsum)
+            sub = jnp.arange(3, n_obs, 4)
+
+            # Laplace with constant scale — linear penalty for deviations.
+            # Tolerates spike-driven jumps better than Normal (linear vs
+            # quadratic cost), while still penalizing sustained drift.
+            _noise_prior_scale = getattr(
+                trend_model, '_integral_noise_prior_scale', 1.0,
+            )
+            integral_noise = numpyro.sample(
+                "integral_noise_scale",
+                dist.HalfNormal(_noise_prior_scale),
+            )
+            mean_rate = obs_cumsum[-1] / n_obs
+            scale = integral_noise * mean_rate + 1e-6
+            numpyro.sample(
+                "integral_obs",
+                dist.Laplace(model_cumsum[sub], scale),
+                obs=obs_cumsum[sub],
+            )
 
         target_model.predict(target_data, predicted_effects)
