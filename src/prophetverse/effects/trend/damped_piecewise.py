@@ -131,24 +131,24 @@ class DampedPiecewiseLinearTrendV3(PiecewiseLinearTrend):
 
         # Transform changepoint matrix: linear ramps → damped ramps.
         #
-        # Original: A[i,j] = max(0, t[i] - cp[j]) in scaled time
-        # Damped:   A_d[i,j] = phi*(1 - phi^h) / (1-phi) in real periods
+        # Changepoint matrix is in period units (weeks for weekly data).
+        # Damping operates in period units — phi is per-period.
         #
-        # phi is a scalar — this is element-wise on the matrix, then
-        # matmul with delta works exactly as before.
-        h_real = changepoint_matrix * self.t_scale
-        eps = 1e-10
+        # h = changepoint_matrix values (periods since changepoint)
+        # A_damped[i,j] = phi*(1 - phi^h) / (1-phi)
+        #
+        # No t_scale conversion — period units throughout.
+        # See integral_trend_experiments.md "t_scale Bug Discovery"
+        h = changepoint_matrix
+        phi_safe = jnp.clip(phi, 1e-6, 1.0 - 1e-6)
 
         A_damped = jnp.where(
             changepoint_matrix > 0,
-            phi * (1 - jnp.power(phi, h_real)) / (1 - phi + eps),
+            phi_safe * (1 - jnp.power(phi_safe, h)) / (1 - phi_safe),
             0.0,
         )
 
-        # Back to scaled-time units (delta is per-scaled-time)
-        A_damped_scaled = A_damped / self.t_scale
-
         # Standard matmul — same as parent, just with damped A
-        trend = A_damped_scaled @ changepoint_coefficients + offset
+        trend = A_damped @ changepoint_coefficients + offset
 
         return trend.reshape((-1, 1))
