@@ -190,3 +190,40 @@ Products examined: KR Philly Light Cream, Borden Singles, KR American Singles �
 - Joint fit, not two-stage: one model, one posterior, shared uncertainty
 - Regressors + effects operate on logits (rate level only)
 - Integral parameters and rate parameters fit simultaneously
+
+## Implementation Attempt Results (2026-04-01, late session)
+
+### What we tried
+Single-model approach: IntegralBudgetTrend computes S(t) internally,
+outputs base rate, PV effects add on top, _model.py does softmax
+per window + integral obs penalty.
+
+### What happened
+- Integral obs (soft penalty) doesn't track tightly enough — same problem as DualIntegralTrend
+- Without fitting directly on cumsum, the integral parameters float free
+- Softmax constraint allocates to wrong budget when integral is loose
+- Proportional scaling of effects blew up (ratio near zero)
+
+### What we actually need
+**Two-stage pipeline, NOT one model:**
+
+1. **Stage 1: Fit integral**
+   - y = cumsum of weekly demand
+   - Trend: DampedPiecewiseLinearTrendV3 + seasonality (no regressors)
+   - Likelihood: Normal on cumsum
+   - Output: S(t) for train + forecast periods
+   - This works (NB 10a proved it — 0.3-3.4% endpoint error)
+
+2. **Stage 2: Fit constrained rate**
+   - y = weekly demand
+   - S(t) from stage 1 is FIXED INPUT (not a parameter)
+   - Base rate = diff1(S(t)) — from the integral, not sampled
+   - Effects: regressors, seasonality, holidays (standard PV)
+   - _model.py: softmax(trend + effects) × window_budget = constrained rates
+   - Likelihood: Normal/NegBinomial on constrained rates vs y
+
+### Key insight
+The integral observation (soft penalty on cumsum) is NOT the same as
+fitting directly on the cumsum. Direct fit gives R² > 0.999. Soft
+penalty gives drift and overshoot. The integral must be fit as a
+primary target, not an auxiliary constraint.
