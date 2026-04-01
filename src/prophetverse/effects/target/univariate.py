@@ -152,6 +152,15 @@ class NegativeBinomialTargetLikelihood(TargetLikelihood):
             likelihood_func=dist.NegativeBinomial2,
         )
 
+    def _fit(self, y, X, scale=1):
+        super()._fit(y, X, scale)
+        # Ensure scale is JAX-compatible for broadcast_mode="effect"
+        # where scale is a pd.Series (one value per series).
+        if isinstance(self.scale_, (pd.Series, pd.DataFrame)):
+            self.scale_ = jnp.array(
+                self.scale_.values.reshape((-1, 1, 1))
+            )
+
     def _predict(self, data, predicted_effects, *args, **kwargs):
         y = data
 
@@ -159,14 +168,26 @@ class NegativeBinomialTargetLikelihood(TargetLikelihood):
         mean = numpyro.deterministic("mean", mean)
         noise_scale = numpyro.sample("noise_scale", dist.HalfNormal(self.noise_scale))
 
-        with numpyro.plate("data", len(mean), dim=-2):
-            numpyro.sample(
-                "obs",
-                dist.NegativeBinomial2(
-                    mean.reshape((-1, 1)), noise_scale * self.scale_
-                ),
-                obs=y,
-            )
+        if mean.ndim <= 2:
+            mean = mean.reshape((-1, 1))
+            with numpyro.plate("data", len(mean), dim=-2):
+                numpyro.sample(
+                    "obs",
+                    dist.NegativeBinomial2(
+                        mean, noise_scale * self.scale_
+                    ),
+                    obs=y,
+                )
+        else:
+            with numpyro.plate("series", mean.shape[0], dim=-3):
+                with numpyro.plate("data", mean.shape[1], dim=-2):
+                    numpyro.sample(
+                        "obs",
+                        dist.NegativeBinomial2(
+                            mean, noise_scale * self.scale_
+                        ),
+                        obs=y,
+                    )
 
         return jnp.zeros_like(mean)
 
@@ -233,28 +254,47 @@ class BetaTargetLikelihood(TargetLikelihood):
 
         self.epsilon = epsilon
 
-        link_function = lambda x: jnp.clip(x, epsilon, 1 - epsilon)
+        link_function = lambda x: jnp.clip(x, epsilon, 1 - epsilon)  # noqa: E731
         super().__init__(
             noise_scale=noise_scale,  # not used for beta now
             link_function=link_function,
             likelihood_func=BetaReparametrized,
         )
 
+    def _fit(self, y, X, scale=1):
+        super()._fit(y, X, scale)
+        # Ensure scale is JAX-compatible for broadcast_mode="effect"
+        if isinstance(self.scale_, (pd.Series, pd.DataFrame)):
+            self.scale_ = jnp.array(
+                self.scale_.values.reshape((-1, 1, 1))
+            )
+
     def _predict(self, data, predicted_effects, *args, **kwargs):
         y = data
 
         mean = self._compute_mean(predicted_effects) * self.scale_
         mean = numpyro.deterministic("mean", mean)
-        noise_scale = numpyro.sample("noise_scale", dist.HalfNormal(self.noise_scale))
+        noise_scale = numpyro.sample(
+            "noise_scale", dist.HalfNormal(self.noise_scale))
 
         if y is not None:
             y = y * self.scale_
 
-        with numpyro.plate("data", len(mean), dim=-2):
-            numpyro.sample(
-                "obs",
-                BetaReparametrized(mean.reshape((-1, 1)), noise_scale),
-                obs=y,
-            )
+        if mean.ndim <= 2:
+            mean = mean.reshape((-1, 1))
+            with numpyro.plate("data", len(mean), dim=-2):
+                numpyro.sample(
+                    "obs",
+                    BetaReparametrized(mean, noise_scale),
+                    obs=y,
+                )
+        else:
+            with numpyro.plate("series", mean.shape[0], dim=-3):
+                with numpyro.plate("data", mean.shape[1], dim=-2):
+                    numpyro.sample(
+                        "obs",
+                        BetaReparametrized(mean, noise_scale),
+                        obs=y,
+                    )
 
         return jnp.zeros_like(mean)
