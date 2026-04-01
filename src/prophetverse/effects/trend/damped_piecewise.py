@@ -59,8 +59,8 @@ class DampedPiecewiseLinearTrendV3(PiecewiseLinearTrend):
     damping_beta_a, damping_beta_b : float
         Beta prior params when learn_damping=True.
     learn_damping : bool
-        If True, phi is sampled from Beta(a, b).
-        If False (default), fixed at damping_factor.
+        If True (default), phi is sampled from Beta(a, b).
+        If False, fixed at damping_factor.
     """
 
     def __init__(
@@ -72,7 +72,7 @@ class DampedPiecewiseLinearTrendV3(PiecewiseLinearTrend):
         damping_factor: float = 0.998,
         damping_beta_a: float = 30.0,
         damping_beta_b: float = 1.0,
-        learn_damping: bool = False,
+        learn_damping: bool = True,
         remove_seasonality_before_suggesting_initial_vals: bool = True,
         global_rate_prior_loc: Optional[float] = None,
         offset_prior_loc: Optional[float] = None,
