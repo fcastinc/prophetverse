@@ -1,7 +1,7 @@
 # Integral-Constrained Trend: Design Notes
 
 **Date:** 2026-04-01
-**Status:** Early design — captures thinking, not a spec yet
+**Status:** Design — softmax allocation approach selected, ready for trial implementation
 
 ## Problem
 
@@ -18,65 +18,135 @@ The fundamental issue: the rate and integral can diverge because they're not str
 
 The integral (cumulative demand) is easy to forecast — even a piecewise linear model gets R² > 0.95 for mature products. The weekly rate is noisy and hard. But the rate must sum to the integral over any forecast horizon.
 
-**The integral should be the budget, not the constraint.** It tells the rate model "you have X units to distribute over the next 13 weeks." The rate model handles the allocation (seasonality, promotions, spikes), but the total must land on the integral target.
+**Separate pattern from level:**
 
-## Architecture
+1. **Level** (how much total?) — easy. Piecewise linear on cumsum. R² > 0.95.
+2. **Pattern** (which weeks get how much?) — hard, but only needs to get relative shape right, not absolute level.
 
-Two levels, hard-linked:
+The rate model captures the **pattern** (spikes, seasonality, promotions). The integral model captures the **level** (total demand). Softmax bridges them — keeps the pattern, scales to the level.
 
-### Level 1: Integral model
+The rate model can be "wrong" on the level and it doesn't matter — the softmax fixes it. It just needs to get the shape right (week 6 is higher than week 7, there's a spike in week 3, etc.).
+
+## Architecture: Softmax Budget Allocation
+
+### Level 1: Integral model (budget)
 - Piecewise linear with damped changepoints on the cumulative
 - No regressors needed — the cumsum is smooth enough
-- This is essentially Layer 1 of DualIntegralTrend (expected integral path)
-- High confidence, easy to fit
-- Outputs: S(t) for all t (cumulative path)
+- Reuses Layer 1 math from DualIntegralTrend
+- Outputs: S(t) for all t → budget for any window = S(t_end) - S(t_start)
 
-### Level 2: Rate allocation model
-- Receives the integral budget: "total demand over forecast horizon = S(T) - S(t_now)"
-- Allocates across weeks using:
-  - Regressors (price, promotions, sale codes)
-  - Seasonality (Fourier terms)
-  - Its own changepoints or dynamics for week-to-week variation
-- Must satisfy: Σ rate(t) = integral budget (hard or near-hard constraint)
-- Handles spikes — the integral doesn't see them, the rate model does
+### Level 2: Rate model (logits)
+- Produces unconstrained **logit scores** for each timestep
+- Logits driven by: regressors, seasonality, changepoints, trend dynamics
+- These capture the allocation **pattern** — which weeks are high/low, where spikes are
+- Logits do NOT need to be at the right absolute level
 
-### The constraint
-- Not a soft penalty (current approach — doesn't work)
-- Not EC pulling the rate (current approach — too weak)
-- A **summation constraint**: predicted rates over the period must sum to the integral's prediction
-- Could be implemented as:
-  - Normalized allocation (rates as fractions of the total, multiplied by budget)
-  - A Lagrange multiplier / hard constraint in the numpyro model
-  - Post-hoc rescaling (fit rates freely, then scale to match integral — loses uncertainty)
+### Softmax bridge
+```
+budget = S(t_end) - S(t_start)         # from integral model
+weights = softmax(logits / temperature) # from rate model, sums to 1
+rates = budget × weights               # allocated rates, sum exactly to budget
+```
 
-## What this is NOT
+- `temperature` controls how uniform vs spiky the allocation is
+  - High temp → near-uniform (each week ≈ budget/H)
+  - Low temp → logits dominate (spiky weeks get more)
+  - Searchable via Optuna
 
-- Not a replacement for effects/regressors — those still handle promotions, price, seasonality at the rate level
-- Not a two-model pipeline — it's one model with two structural levels
-- Not GenLogistic — that assumes an S-curve functional form. This is piecewise linear on the integral, fully flexible on the rate
+### How it handles spikes
+The logits capture spike patterns via regressors (sale codes, promotions) and seasonality. A promotion week gets a high logit → high softmax weight → more of the budget. But the total is still exactly the budget. The spike is "paid for" by other weeks getting slightly less.
 
-## Open questions
+## Constraint mechanism: why softmax works
 
-1. **How to implement the summation constraint in numpyro?** Options:
-   - `numpyro.factor()` penalty on `|Σ rate - integral_budget|`
-   - Simplex allocation: rates = integral_budget × softmax(raw_weights)
-   - Scan that tracks running sum and adjusts remaining budget
-   
-2. **Where do spikes come from?** If the integral is smooth, all spikes come from effects. Are the current regressors enough to explain all spikes, or does the rate model need its own spike-handling capability (changepoints, impulse effects)?
+| Property | DualIntegralTrend (current) | Softmax allocation (proposed) |
+|---|---|---|
+| Constraint type | Soft (EC + Laplace obs) | Exact (softmax sums to 1) |
+| NUTS geometry | OK but conflicting gradients | Clean — NUTS operates on unconstrained logits |
+| Pattern vs level | Coupled (rate must get both right) | Decoupled (integral=level, logits=pattern) |
+| Correlations | Unconstrained | Flexible (logistic-normal, not forced negative like Dirichlet) |
+| Regressor support | Effects added to rate | Regressors drive logits |
 
-3. **Forecast horizon matters.** The integral budget for 13 weeks is well-determined. But within those 13 weeks, how is the budget allocated? The allocation pattern depends on seasonality and effects, which may be uncertain even if the total is known.
+## Approaches evaluated and rejected
 
-4. **Training vs forecast.** During training, we observe both the integral and the rate. During forecast, we only have the integral prediction. How does the rate model learn the allocation pattern from training data?
+1. **numpyro.factor() penalty** — already tried, conflicts with EC, can't get tight without divergences
+2. **Dirichlet allocation** — forces negative correlations between weeks, can't model adjacent-week similarity
+3. **Scan with running budget** — sequential dependencies create funnel geometries, ordering-dependent
+4. **Conditional (last rate deterministic)** — asymmetric treatment, last period absorbs all error
+5. **Post-hoc reconciliation** — model-agnostic but model doesn't learn the constraint structure
 
-5. **How does this interact with PV's architecture?** The trend outputs rate(t). Effects add to it. The likelihood fits on (trend + effects). If the trend already includes the integral constraint, and effects are additive on top, do the effects break the constraint? Possibly: trend outputs the base allocation, effects are additive deviations, and the total (trend + effects) is what gets constrained to sum to the integral.
+## PV integration
 
-## Relationship to existing code
+The trend `_predict()` method outputs `rates.reshape((-1, 1))`. PV effects are additive on top. The softmax constraint must apply to the **total** (trend + effects), not just the trend.
 
-- **DualIntegralTrend Layer 1** — the integral model. This math is reusable.
-- **DualIntegralTrend Layer 2** — rate changepoints. May still be useful for the allocation model.
-- **DualIntegralTrend Layer 3 (EC)** — replaced by the hard summation constraint.
-- **`_model.py` integral obs block** — replaced by the structural constraint inside the trend.
-- **GenLogisticTrend** — inspiration for "model the cumulative, derive the rate" approach, but different functional form.
+Two options:
+- **(A) Softmax inside trend only** — trend outputs budget-constrained base rates. Effects are additive deviations that can break the constraint. Simpler but constraint is approximate.
+- **(B) Softmax on full model output** — similar to current `_model.py` integral obs block. After all effects are summed, apply the softmax normalization. Constraint is exact but requires `_model.py` changes.
+
+For the trial: start with **(A)**. The trend produces budget-constrained base rates. If effects are small relative to the trend (which they should be for mature products), the constraint is approximately maintained. Can move to (B) if needed.
+
+## Implementation plan
+
+### Trial trend: `IntegralBudgetTrend`
+
+Location: `pv-internal/src/prophetverse/effects/trend/integral_budget.py`
+
+```python
+class IntegralBudgetTrend(PiecewiseLinearTrend):
+    """Budget-constrained trend: integral sets level, softmax allocates.
+    
+    Level 1: Piecewise linear integral path (damped changepoints)
+    Level 2: Logit-based rate allocation (softmax × budget)
+    """
+    def __init__(
+        self,
+        # Integral changepoints (same as DualIntegralTrend Layer 1)
+        changepoint_interval=26,
+        changepoint_range=0.9,
+        changepoint_prior_scale=0.01,
+        integral_damping_beta_a=100.0,
+        integral_damping_beta_b=1.0,
+        mu_prior_scale_frac=0.2,
+        # Rate logit model
+        rate_cp_interval=8,
+        rate_cp_range=0.95,
+        rate_cp_prior_scale=0.005,
+        # Softmax temperature
+        temperature=1.0,
+        temperature_prior_scale=1.0,  # if learned
+        learn_temperature=False,
+    ):
+```
+
+**`_predict` flow:**
+1. Sample integral path parameters (mu, delta_S, phi_S) — same as DualIntegralTrend Layer 1
+2. Compute `S(t)` analytically — the cumulative path
+3. Compute per-timestep budgets: `budget(t) = S(t) - S(t-1)` — the "expected rate"
+4. Sample rate logit parameters (delta_R, maybe rate damping)
+5. Compute logits from rate changepoints + expected rate as base
+6. Apply `softmax(logits / temperature)` → weights
+7. For each segment, `rates = segment_budget × weights`
+8. Output rates
+
+**No EC, no scan, no soft integral observation.** The constraint is structural.
+
+### What to test in the notebook
+- Does the integral track tightly? (It should — it's the primary model)
+- Do the rates capture spikes via regressors?
+- How sensitive is the temperature parameter?
+- Compare forecast accuracy (nRMSE) vs DualIntegralTrend
+
+## Reusable from DualIntegralTrend
+
+- Layer 1 math (integral path, damped changepoints, `S(t)` computation) — copy directly
+- `_fit` method (mu loc/scale from data, rate CP grid construction)
+- `_transform` method (changepoint matrices, selection index)
+- Constructor parameters for integral changepoints
+
+## Not reusable
+
+- Layer 3 (EC scan) — replaced by softmax
+- `_model.py` integral obs block — no longer needed (constraint is structural)
+- kappa parameter — eliminated
 
 ## Tuning run evidence
 
@@ -86,4 +156,4 @@ Best Optuna trials show:
 - The model prefers the integral observation doing the work over EC
 - But even the integral observation isn't tight enough — model integral consistently overshoots actual
 
-Products examined: KR Philly Light Cream, Borden Singles, KR American Singles — all show the same pattern of integral overshoot.
+Products examined: KR Philly Light Cream, Borden Singles, KR American Singles — all show the same pattern of integral overshoot. Borden Singles has a "kick" (slope change ~1994) that piecewise linear handles well.
