@@ -103,4 +103,64 @@ def model(
                 obs=obs_cumsum[sub],
             )
 
+        # Windowed budget constraint — softmax renormalization.
+        # After all effects are summed, renormalize per window so rates
+        # sum to the integral budget. Activated by budget_constraint_enabled.
+        if y is not None and getattr(trend_model, 'budget_constraint_enabled', False):
+            window_size = getattr(trend_model, 'budget_window_size', 13)
+            integral = trend_model._expected_integral
+            selection_ix = trend_model._selection_ix
+
+            # Compute total model output (trend + all effects)
+            total = sum(
+                eff for name, eff in predicted_effects.items()
+                if not name.startswith("latent/")
+            )
+            total_flat = total.flatten()
+            T = len(total_flat)
+
+            # Integral at selected indices
+            integral_selected = integral[selection_ix]
+
+            # Compute per-window budgets from integral differences
+            # Budget for window [start, end) = S(end) - S(start)
+            # Use S values with prepended 0 for first window
+            integral_with_zero = jnp.concatenate([jnp.array([0.0]), integral_selected])
+
+            # Reshape into windows (pad remainder with last values if needed)
+            n_full_windows = T // window_size
+            usable_T = n_full_windows * window_size
+
+            # Reshape usable portion into (n_windows, window_size)
+            logits_windowed = total_flat[:usable_T].reshape(n_full_windows, window_size)
+
+            # Budget per window
+            window_starts = jnp.arange(0, usable_T, window_size)
+            window_ends = window_starts + window_size
+            budgets = integral_with_zero[window_ends] - integral_with_zero[window_starts]
+
+            # Softmax per window, scale by budget
+            weights = jax.nn.softmax(logits_windowed, axis=1)  # (n_windows, window_size)
+            constrained_windowed = weights * budgets[:, None]  # broadcast budget per window
+
+            # Flatten back
+            constrained = constrained_windowed.flatten()
+
+            # Append remainder (unconstrained pass-through)
+            if usable_T < T:
+                constrained = jnp.concatenate([
+                    constrained, total_flat[usable_T:]
+                ])
+
+            # Replace all effects with the constrained total
+            constrained = constrained.reshape(total.shape)
+            for name in list(predicted_effects.keys()):
+                if not name.startswith("latent/"):
+                    predicted_effects[name] = jnp.zeros_like(
+                        predicted_effects[name]
+                    )
+            predicted_effects["trend"] = numpyro.deterministic(
+                "budget_constrained_total", constrained
+            )
+
         target_model.predict(target_data, predicted_effects)
