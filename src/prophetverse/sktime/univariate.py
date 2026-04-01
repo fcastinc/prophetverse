@@ -21,6 +21,7 @@ from prophetverse.effects.target.univariate import (
     GammaTargetLikelihood,
     BetaTargetLikelihood,
 )
+from prophetverse.effects.target.inverse_gaussian import InverseGaussianTargetLikelihood
 from prophetverse.utils.deprecation import deprecation_warning
 from prophetverse.utils import series_to_tensor, reindex_time_series
 from collections import defaultdict
@@ -39,6 +40,7 @@ _LIKELIHOOD_MODEL_MAP = {
     "gamma": GammaTargetLikelihood,
     "negbinomial": NegativeBinomialTargetLikelihood,
     "beta": BetaTargetLikelihood,
+    "inverse_gaussian": InverseGaussianTargetLikelihood,
 }
 
 _DISCRETE_LIKELIHOODS = ["negbinomial"]

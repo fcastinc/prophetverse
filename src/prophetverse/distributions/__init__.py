@@ -7,10 +7,13 @@ for models.
 from .reparametrization import GammaReparametrized, BetaReparametrized
 from .hurdle_distribution import HurdleDistribution
 from .truncated_discrete import TruncatedDiscrete
+from .inverse_gaussian import InverseGaussian, InverseGaussianReparametrized
 
 __all__ = [
     "GammaReparametrized",
     "BetaReparametrized",
     "HurdleDistribution",
     "TruncatedDiscrete",
+    "InverseGaussian",
+    "InverseGaussianReparametrized",
 ]
