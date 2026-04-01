@@ -173,9 +173,12 @@ class IntegralBudgetTrend(PiecewiseLinearTrend):
         rates = base_rate[selection_ix]
 
         # === Expose integral for _model.py budget constraint ===
-        # Store on self so _model.py can access via trend_model
-        self._expected_integral = expected_integral
-        self._selection_ix = selection_ix
+        # Pass through predicted_effects so _model.py can read it.
+        # Using latent/ prefix so it's not included in the model sum.
+        predicted_effects["latent/expected_integral"] = numpyro.deterministic(
+            "expected_integral_full", expected_integral
+        )
+        predicted_effects["latent/selection_ix"] = selection_ix
 
         # Diagnostics
         numpyro.deterministic("mean_rate_value", mu)

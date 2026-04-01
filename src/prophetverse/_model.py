@@ -2,6 +2,7 @@ import numpyro
 import numpyro.distributions as dist
 from prophetverse.effects.base import BaseEffect
 from typing import Any, Dict, Optional
+import jax
 import jax.numpy as jnp
 from prophetverse.utils.numpyro import CacheMessenger
 
@@ -108,8 +109,8 @@ def model(
         # sum to the integral budget. Activated by budget_constraint_enabled.
         if y is not None and getattr(trend_model, 'budget_constraint_enabled', False):
             window_size = getattr(trend_model, 'budget_window_size', 13)
-            integral = trend_model._expected_integral
-            selection_ix = trend_model._selection_ix
+            integral = predicted_effects.get("latent/expected_integral")
+            selection_ix = predicted_effects.get("latent/selection_ix")
 
             # Compute total model output (trend + all effects)
             total = sum(
@@ -127,12 +128,15 @@ def model(
             # Use S values with prepended 0 for first window
             integral_with_zero = jnp.concatenate([jnp.array([0.0]), integral_selected])
 
-            # Reshape into windows (pad remainder with last values if needed)
-            n_full_windows = T // window_size
-            usable_T = n_full_windows * window_size
+            # Adjust window size to divide evenly into T.
+            # E.g., T=374, target=26 → 14.38 windows → 14 windows
+            # → actual window = 374//14 = 26 (remainder 10 distributed)
+            n_windows = max(1, round(T / window_size))
+            window_size = T // n_windows
+            usable_T = n_windows * window_size
 
             # Reshape usable portion into (n_windows, window_size)
-            logits_windowed = total_flat[:usable_T].reshape(n_full_windows, window_size)
+            logits_windowed = total_flat[:usable_T].reshape(n_windows, window_size)
 
             # Budget per window
             window_starts = jnp.arange(0, usable_T, window_size)
@@ -152,14 +156,17 @@ def model(
                     constrained, total_flat[usable_T:]
                 ])
 
-            # Replace all effects with the constrained total
+            # Scale all effects proportionally to preserve decomposition.
+            # ratio = constrained / total. Each effect gets multiplied by
+            # the ratio so their sum equals the constrained total.
             constrained = constrained.reshape(total.shape)
+            ratio = constrained / (total + 1e-10)
             for name in list(predicted_effects.keys()):
                 if not name.startswith("latent/"):
-                    predicted_effects[name] = jnp.zeros_like(
-                        predicted_effects[name]
+                    predicted_effects[name] = (
+                        predicted_effects[name] * ratio
                     )
-            predicted_effects["trend"] = numpyro.deterministic(
+            numpyro.deterministic(
                 "budget_constrained_total", constrained
             )
 
