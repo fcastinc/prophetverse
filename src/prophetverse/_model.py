@@ -156,17 +156,15 @@ def model(
                     constrained, total_flat[usable_T:]
                 ])
 
-            # Scale all effects proportionally to preserve decomposition.
-            # ratio = constrained / total. Each effect gets multiplied by
-            # the ratio so their sum equals the constrained total.
+            # Replace total with constrained rates.
+            # Set trend to constrained total, zero all other effects.
             constrained = constrained.reshape(total.shape)
-            ratio = constrained / (total + 1e-10)
             for name in list(predicted_effects.keys()):
                 if not name.startswith("latent/"):
-                    predicted_effects[name] = (
-                        predicted_effects[name] * ratio
+                    predicted_effects[name] = jnp.zeros_like(
+                        predicted_effects[name]
                     )
-            numpyro.deterministic(
+            predicted_effects["trend"] = numpyro.deterministic(
                 "budget_constrained_total", constrained
             )
 
