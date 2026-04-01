@@ -109,7 +109,7 @@ def model(
         # sum to the integral budget. Activated by budget_constraint_enabled.
         if y is not None and getattr(trend_model, 'budget_constraint_enabled', False):
             window_size = getattr(trend_model, 'budget_window_size', 13)
-            integral = predicted_effects.get("latent/expected_integral")
+            integral = predicted_effects.get("latent/expected_integral_full")
             selection_ix = predicted_effects.get("latent/selection_ix")
 
             # Compute total model output (trend + all effects)

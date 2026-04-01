@@ -175,9 +175,11 @@ class IntegralBudgetTrend(PiecewiseLinearTrend):
         # === Expose integral for _model.py budget constraint ===
         # Pass through predicted_effects so _model.py can read it.
         # Using latent/ prefix so it's not included in the model sum.
-        predicted_effects["latent/expected_integral"] = numpyro.deterministic(
-            "expected_integral_full", expected_integral
-        )
+        # Pass integral to _model.py for budget constraint.
+        # Use latent/ prefix so PV doesn't include in model sum.
+        # Don't use numpyro.deterministic for full integral — its length
+        # differs from the selected output and breaks predict_components.
+        predicted_effects["latent/expected_integral_full"] = expected_integral
         predicted_effects["latent/selection_ix"] = selection_ix
 
         # Diagnostics
