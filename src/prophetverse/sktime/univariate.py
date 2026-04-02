@@ -230,6 +230,9 @@ class Prophetverse(BaseProphetForecaster):
         self.trend_model_ = self._trend.clone()
         self.likelihood_model_ = self._likelihood.clone()
 
+        # Expose _scale to the trend for constraint normalization.
+        self.trend_model_._data_scale = self._scale
+
         if self._likelihood_is_discrete:
             # Scale the data for discrete likelihoods to avoid non-integer values.
             self.trend_model_.fit(X=X, y=y / self._scale, scale=1)

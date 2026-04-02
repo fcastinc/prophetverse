@@ -115,12 +115,21 @@ class ConstrainedIntegralTrend(PiecewiseLinearTrend):
         self._train_fh = y.index.get_level_values(-1).unique().sort_values()
 
         # Compute step budgets from integral.
-        # Normalize by data_scale (PV's _scale = max abs of raw y).
+        # Use PV's _scale (set on self by univariate.py before _fit).
+        # Falls back to data_scale constructor param if not set.
         if self._integral_path is not None:
             self._step_budgets = jnp.diff(
                 self._integral_path, prepend=0.0)
-            self._norm_scale = float(
-                self.data_scale) if self.data_scale else 1.0
+            pv_scale = getattr(self, '_data_scale', None)
+            if pv_scale is not None:
+                if hasattr(pv_scale, 'values'):
+                    self._norm_scale = float(pv_scale.values.flatten()[0])
+                else:
+                    self._norm_scale = float(pv_scale)
+            elif self.data_scale is not None:
+                self._norm_scale = float(self.data_scale)
+            else:
+                self._norm_scale = 1.0
         else:
             self._step_budgets = None
             self._norm_scale = 1.0
