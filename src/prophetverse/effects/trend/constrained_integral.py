@@ -106,6 +106,25 @@ class ConstrainedIntegralTrend(PiecewiseLinearTrend):
         super()._fit(y, X, scale)
         self._train_fh = y.index.get_level_values(-1).unique().sort_values()
 
+        # Rescale integral path to match PV's internal space.
+        # PV normalizes y by max(abs(y)) before passing to trend.
+        # For NegBinomial: y is pre-divided, scale=1. y_max ≈ 1.
+        # For Normal: y is raw, scale=max(abs(y)). y_max = scale.
+        # Either way, dividing integral by max(abs(y_raw)) aligns it.
+        # We infer y_raw max: if scale=1, y is already normalized
+        # and integral needs dividing by actual y_max (from raw data).
+        # Use: integral_scale = max(abs(y)) * scale
+        #   NegBin: max(y/S) * 1 = max(y/S) ≈ 1/S * max(y) — wrong
+        # Simpler: just use sum of first diff as proxy for weekly scale
+        if self._integral_path is not None:
+            # The integral is cumsum of raw y. The trend sees y/max(y_raw).
+            # We need integral / max(y_raw). Estimate max(y_raw) from the
+            # integral: max weekly demand ≈ max(diff(integral)).
+            diffs = jnp.diff(self._integral_path)
+            integral_scale = float(jnp.max(jnp.abs(diffs)))
+            if integral_scale > 0:
+                self._integral_path = self._integral_path / integral_scale
+
         # Build rate changepoint grid
         t_scaled_train = self._index_to_scaled_timearray(self._train_fh)
         n_train = len(t_scaled_train)
