@@ -471,3 +471,41 @@ the existing DualIntegralTrend which works and produces spikes.
    adjustment is needed. The component posteriors tell you WHERE to allocate it.
    Weight corrections by posterior uncertainty — tight components stay, uncertain
    components absorb the correction. Uses MCMC uncertainty without changing the model.
+
+## Post-hoc Log-Softmax Results (2026-04-02, final)
+
+### What works
+DualIntegralTrend (existing, unchanged) + post-hoc log-softmax:
+- Use DualIntegralTrend as-is — it captures spike patterns via sale/holiday effects
+- Post-hoc: log(predictions) → softmax → weights × budget = corrected rates
+- Temperature optimized per series on IS data (lands 0.6-0.9)
+- Budget from stage 1 integral forecast (within 2% of actual)
+
+### Results (using actual OOS sum as budget — stage 1 would give ~2% error)
+| Series | Endpoint err (orig → corr) | RMSE (orig → corr) |
+|--------|---------------------------|---------------------|
+| KR Phila Cream | 49% → 0% | 30,626 → 24,292 (↓21%) |
+| KR American Singles | 41% → 0% | 25,135 → 22,713 (↓10%) |
+| Borden Singles | 37% → 0% | 11,373 → 13,227 (↑16%) |
+| KR Philly Light | 35% → 0% | 8,367 → 8,655 (↑3%) |
+| Dom Cream Cheese | 7.5% → 0% | 6,026 → 6,166 (↑2%) |
+
+### Why it works
+- DualIntegralTrend learns large sale effect coefficients because the integral
+  obs constraint prevents the trend from absorbing everything
+- The spike PATTERN is correct — just the LEVEL (cumsum total) drifts
+- Log-softmax preserves the pattern while fixing the level
+- No model changes needed — pure post-processing
+
+### What needs refinement
+- Series that were already close (Dom, KR Philly) get slightly worse RMSE
+- The correction is too aggressive on weeks where the model was already right
+- Need: error budget (allow ±X% slack), rolling correction, per-component weighting
+- Temperature optimizer could be improved (currently IS-only, global per series)
+
+### Implementation path
+1. Add `correct_forecast(predictions, integral_budgets)` function to mature_product
+2. Accepts stage 1 integral budgets per series
+3. Applies log-softmax with per-series optimized temperature
+4. Returns corrected predictions in same format
+5. Wrap stage 1 + stage 2 + correction in one pipeline function
