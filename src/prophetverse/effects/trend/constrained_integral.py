@@ -106,6 +106,12 @@ class ConstrainedIntegralTrend(PiecewiseLinearTrend):
         super()._fit(y, X, scale)
         self._train_fh = y.index.get_level_values(-1).unique().sort_values()
 
+        # Rescale integral path to match PV's normalization
+        # PV divides y by scale, so the trend operates in normalized space.
+        # The integral path (cumsum of raw y) must be divided by scale too.
+        if self._integral_path is not None and scale != 1.0:
+            self._integral_path = self._integral_path / scale
+
         # Build rate changepoint grid
         t_scaled_train = self._index_to_scaled_timearray(self._train_fh)
         n_train = len(t_scaled_train)
