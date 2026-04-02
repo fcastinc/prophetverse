@@ -177,8 +177,13 @@ class ConstrainedIntegralTrend(PiecewiseLinearTrend):
         # === Base rate from fixed integral ===
         # S(t) is fixed data — not sampled
         integral = self._integral_path
-        # Base rate = S(t) - S(t-1)
-        base_rate = jnp.diff(integral[:T], prepend=0.0)
+        # Base rate = S(t) - S(t-1), normalized by y_max
+        # so it's in the same space as PV's normalized y
+        raw_rate = jnp.diff(integral[:T], prepend=0.0)
+        if self.y_max is not None and self.y_max > 0:
+            base_rate = raw_rate / self.y_max
+        else:
+            base_rate = raw_rate
 
         # === Rate changepoints (sampled) ===
         delta_R = numpyro.sample(
