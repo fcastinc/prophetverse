@@ -438,3 +438,36 @@ What we tried:
 - NB 10e two-stage pipeline (stage 1 integral → stage 2 constrained rate)
 - `panels.py` y_col and y_fillna parameters
 - Per-series integral path extraction from stage 1 predictions
+
+## Improvement Ideas for DualIntegralTrend (2026-04-02)
+
+Parking the ConstrainedIntegralTrend scaling issues. Returning to improving
+the existing DualIntegralTrend which works and produces spikes.
+
+### Ideas to explore
+
+1. **Better priors on holidays/sales** — all effects currently get Normal(0, 1.4).
+   Per-effect priors could help. Sales might need wider priors than macro regressors.
+   Low risk, easy to test.
+
+2. **NegBinomial with broadcast_mode="effect"** — fixed the bug for this in
+   pv-internal. Enables hierarchical pooling across series. Could improve
+   coefficient estimation for rare events.
+
+3. **Effect mode refinement** — Optuna chose additive for sales but might be
+   stuck in a local minimum. Multiplicative sales = spikes proportional to base
+   level. Worth testing manually.
+
+4. **Time-varying betas (random walk)** — sale coefficients that change over
+   time. Products respond differently to promotions as they mature. Would need
+   a custom PV effect or scan-based implementation.
+
+5. **Structural improvements** — something we're overlooking? The EC mechanism
+   is weak, the integral obs is soft. Maybe a different coupling between
+   integral and rate layers.
+
+6. **Post-processing: component-error-weighted allocation** — ★ EXPLORING THIS ★
+   Run MCMC, get posterior samples. The integral error tells you how much total
+   adjustment is needed. The component posteriors tell you WHERE to allocate it.
+   Weight corrections by posterior uncertainty — tight components stay, uncertain
+   components absorb the correction. Uses MCMC uncertainty without changing the model.
