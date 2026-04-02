@@ -298,3 +298,96 @@ The integral constraint serves TWO purposes:
 - `load_demand_data` import path fixed
 - Backward-compatible `apply_best_params` (.get with defaults)
 - `clustering.py` label type fix
+
+## Log-Softmax Budget Constraint (2026-04-02, late session)
+
+### The breakthrough: log-transform before softmax
+
+Regular softmax on raw predictions (values ~10,000) needs a temperature
+parameter to avoid saturation. The optimizer finds temperature ≈ 7,000-10,000
+which makes the allocation nearly uniform — defeating the purpose.
+
+**Log-transform fixes this.** Take log of predictions before softmax:
+
+```python
+log_pred = log(max(pred, 1.0))   # 10,000 → 9.21, 50,000 → 10.82
+weights = softmax(log_pred)       # balanced, no temperature needed
+constrained = budget × weights    # sum exactly equals budget
+```
+
+Key properties:
+- **Ratios preserved exactly**: if pred_A / pred_B = 5, constrained_A / constrained_B = 5
+- **Sum constrained exactly**: window sum = budget, always
+- **No temperature parameter**: log compression handles scale naturally
+- **Gradients flow**: log + softmax + multiply are all differentiable
+- **JAX-compatible**: works inside numpyro model, NUTS can trace through it
+
+### Why this works when regular softmax didn't
+
+Regular softmax(pred / T):
+- T too low → saturates (one week gets everything)
+- T too high → uniform (all weeks equal)
+- No good middle ground because pred values span narrow range (10K-50K)
+
+Log-softmax(log(pred)):
+- log(10K) = 9.21, log(50K) = 10.82 — difference of 1.6
+- Softmax on [9.21, 10.82] gives balanced but differentiated weights
+- A 5x spike in demand → 5x more budget share, naturally
+
+### Implementation: inside _model.py during training
+
+```python
+# After all effects are summed, before likelihood
+if getattr(trend_model, 'budget_constraint_enabled', False):
+    total = sum(predicted_effects that aren't latent)
+    total_flat = total.flatten()
+    
+    # Get integral path from trend
+    integral = predicted_effects["latent/trend_integral"]
+    
+    # Compute budgets per window
+    # ... (windowed integral differences)
+    
+    # Log-softmax per window
+    log_total = jnp.log(jnp.maximum(total_flat[:usable], 1.0))
+    windowed = log_total.reshape(n_windows, window_size)
+    weights = jax.nn.softmax(windowed, axis=1)
+    constrained = (weights * budgets[:, None]).flatten()
+    
+    # Replace predicted_effects with constrained rates
+    # Scale each effect proportionally
+    ratio = constrained / (total_flat[:usable] + 1e-10)
+    ...
+```
+
+### Why it must be during training, not post-hoc
+
+Post-hoc constraint can fix the level but the model doesn't learn:
+- Without constraint during training, the trend absorbs spikes via changepoints
+- Effect coefficients (sales, holidays) stay small because the trend does all the work
+- At forecast time, changepoints project smooth → no spikes
+- Post-hoc softmax has no variation to redistribute
+
+With constraint during training:
+- The integral is locked (constraint forces cumsum to match)
+- The trend CAN'T absorb spikes because the integral holds it
+- Effects MUST explain the spikes → larger coefficients
+- At forecast time, effects produce spikes → softmax redistributes correctly
+
+### What needs to happen
+
+1. Implement log-softmax constraint in `_model.py` as a new block
+   - Activated by `budget_constraint_enabled` flag
+   - Uses trend's `latent/trend_integral` for budgets
+   - Non-overlapping windows (size = forecast horizon)
+   - Shapes must be static for JAX tracing
+   
+2. The integral path (Layer 1 of DualIntegralTrend) provides the budget
+   - No separate stage 1 needed — integral params fit jointly
+   - The log-softmax constraint effectively makes the integral authoritative
+   - Because rates must sum to S(t) per window, the integral params learn
+     to match the actual cumsum
+
+3. Temperature is eliminated — log handles it naturally
+
+4. Test in NB 06 with DualIntegralTrend + budget_constraint_enabled
