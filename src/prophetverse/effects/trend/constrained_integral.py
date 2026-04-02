@@ -73,6 +73,8 @@ class ConstrainedIntegralTrend(PiecewiseLinearTrend):
         # Budget constraint
         budget_constraint_enabled: bool = True,
         budget_window_size: int = 26,
+        # Fixed integral path from stage 1
+        integral_path=None,
     ):
         self.rate_cp_interval = rate_cp_interval
         self.rate_cp_range = rate_cp_range
@@ -81,7 +83,8 @@ class ConstrainedIntegralTrend(PiecewiseLinearTrend):
         self.rate_damping_beta_b = rate_damping_beta_b
         self.budget_constraint_enabled = budget_constraint_enabled
         self.budget_window_size = budget_window_size
-        self._integral_path = None
+        self.integral_path = integral_path
+        self._integral_path = jnp.array(integral_path, dtype=jnp.float32) if integral_path is not None else None
         super().__init__(
             changepoint_interval=changepoint_interval,
             changepoint_range=changepoint_range,
@@ -96,6 +99,7 @@ class ConstrainedIntegralTrend(PiecewiseLinearTrend):
         integral_path : array-like
             S(t) values for the full time range (train + forecast).
         """
+        self.integral_path = list(integral_path)  # serializable for clone
         self._integral_path = jnp.array(integral_path, dtype=jnp.float32)
 
     def _fit(self, y, X, scale=1.0):
