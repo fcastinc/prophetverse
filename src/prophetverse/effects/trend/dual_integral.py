@@ -332,4 +332,7 @@ class DualIntegralTrend(PiecewiseLinearTrend):
             expected_integral[selection_ix],
         )
 
+        # Expose trend's integral for _model.py constraint
+        predicted_effects["latent/trend_integral"] = expected_integral[selection_ix]
+
         return rates.reshape((-1, 1))

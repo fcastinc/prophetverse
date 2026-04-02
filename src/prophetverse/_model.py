@@ -58,10 +58,11 @@ def model(
                 effect = numpyro.deterministic(exog_effect_name, effect)
                 predicted_effects[exog_effect_name] = effect
 
-        # Auxiliary integral observation — on the FULL model output.
-        # Constrains cumsum(full_model) ≈ cumsum(y_observed).
-        # Only active during training (y is not None).
-        # Only active if the trend requests it via integral_obs_enabled.
+        # Auxiliary integral observation.
+        # If trend exposes its internal integral path (latent/trend_integral),
+        # constrain THAT against cumsum(y). This is tighter because the
+        # trend integral is smooth — effects don't disturb it.
+        # Otherwise falls back to cumsum(full_model) ≈ cumsum(y).
         if y is not None and getattr(trend_model, 'integral_obs_enabled', False):
             obs_dist_name = getattr(
                 trend_model, 'integral_obs_distribution', 'laplace')
@@ -77,16 +78,20 @@ def model(
             obs_dist_cls = _INTEGRAL_OBS_DISTRIBUTIONS.get(
                 obs_dist_name, dist.Laplace)
 
-            # Compute full model mean (same as likelihood does)
-            full_mean = sum(
-                eff for name, eff in predicted_effects.items()
-                if not name.startswith("latent/")
-            )
-            full_mean_flat = full_mean.flatten()
             y_flat = y.flatten()
-
-            model_cumsum = jnp.cumsum(full_mean_flat)
             obs_cumsum = jnp.cumsum(y_flat)
+
+            # Use trend's internal integral if available (smooth, no effects)
+            trend_integral = predicted_effects.get("latent/trend_integral")
+            if trend_integral is not None:
+                model_cumsum = trend_integral.flatten()
+            else:
+                # Fallback: cumsum of full model output
+                full_mean = sum(
+                    eff for name, eff in predicted_effects.items()
+                    if not name.startswith("latent/")
+                )
+                model_cumsum = jnp.cumsum(full_mean.flatten())
 
             # Subsample every Nth point
             n_obs = len(obs_cumsum)
