@@ -391,3 +391,50 @@ With constraint during training:
 3. Temperature is eliminated — log handles it naturally
 
 4. Test in NB 06 with DualIntegralTrend + budget_constraint_enabled
+
+## ConstrainedIntegralTrend Implementation Attempt (2026-04-02)
+
+### What we built
+- `ConstrainedIntegralTrend`: receives fixed S(t) from stage 1, outputs base_rate + rate changepoints
+- `_model.py` log-softmax block: after trend + effects summed, constrains per window
+- Two-stage pipeline in NB 10e: stage 1 integral fit → stage 2 constrained rate model
+
+### The scaling problem
+PV normalizes y internally: `_scale = max(abs(y_raw))`, trend sees `y / _scale`.
+The integral path is in raw units (cumsum of raw y). The constraint needs step
+budgets in the SAME normalized space as the model output.
+
+The core difficulty: **the trend doesn't have access to PV's `_scale`**.
+
+What we tried:
+1. **Pass y_max from notebook** — wrong because y_max was max across ALL UPCs, not per-series. PV computes _scale per series.
+2. **max(diff(integral))** as proxy — underestimates because integral is smoothed (no spikes). Stage 1 predicted max_rate ≠ actual max_rate.
+3. **Infer scale from mean(raw_steps) / mean(normalized_y)** — WRONG: this made step_budgets ≈ model output, turning the constraint into a no-op.
+4. **data_scale from group_data** — correct value but needs verification that it matches PV's _scale exactly.
+
+### Why scaling is so hard
+- NegBinomial: PV passes `y / _scale` to trend with `scale=1`. Trend doesn't know _scale.
+- Normal: PV passes `y` with `scale=_scale`. Trend knows scale.
+- InverseGaussian: same as Normal (non-discrete).
+- The trend can't use a one-size-fits-all approach because PV's behavior varies by likelihood.
+
+### Key findings
+1. **Log-softmax works mechanically** — gradients flow, ratios preserved, no temperature needed
+2. **The constraint must modify the output** — if budget = model prediction, constraint is no-op
+3. **The budget must come from the integral (stage 1)** not from the model's own prediction
+4. **Scale mismatch between integral and model is the blocking issue**
+5. **The model DOES learn meaningful effect coefficients** — sale_b, sale_s, price, holidays all have real values. The effects are there, the constraint just isn't applying them.
+6. **Component decomposition showed mean ≈ budget_constrained_total** — confirmed no-op when scales match
+
+### Options for next session
+1. **Use InverseGaussian or Normal likelihood** — PV passes raw y with real scale. No NegBinomial scale gymnastics.
+2. **Store _scale on the trend during PV's fit pipeline** — modify PV's base.py to expose _scale to the trend. Clean but invasive.
+3. **Compute data_scale correctly per series** from group_data in the notebook — we were close, just need to verify the value matches PV's computation exactly.
+4. **Skip PV's internal scaling entirely** — set `scale=None` or `scale=1` explicitly on Prophetverse. Priors would need retuning.
+
+### Infrastructure built (reusable)
+- `ConstrainedIntegralTrend` class with integral_path, data_scale, rate changepoints
+- `_model.py` log-softmax constraint block (step budgets, windowed, non-overlapping)
+- NB 10e two-stage pipeline (stage 1 integral → stage 2 constrained rate)
+- `panels.py` y_col and y_fillna parameters
+- Per-series integral path extraction from stage 1 predictions
