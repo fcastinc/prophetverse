@@ -112,15 +112,21 @@ class ConstrainedIntegralTrend(PiecewiseLinearTrend):
         super()._fit(y, X, scale)
         self._train_fh = y.index.get_level_values(-1).unique().sort_values()
 
-        # Compute step budgets from integral — keep in raw units.
-        # _model.py normalizes using raw y (which it has access to).
-        # The integral path stays raw — base_rate will be in raw units
-        # but the log-softmax only uses relative values so scale doesn't matter.
+        # Compute step budgets and infer PV's scale.
+        # The trend receives y / _scale (normalized). The integral is raw.
+        # Infer _scale from the ratio: mean(raw_steps) / mean(y_normalized).
         if self._integral_path is not None:
             self._step_budgets = jnp.diff(
                 self._integral_path, prepend=0.0)
+            y_mean = float(jnp.abs(y.values.flatten()).mean())
+            step_mean = float(jnp.abs(self._step_budgets[1:]).mean())
+            if y_mean > 1e-10:
+                self._inferred_scale = step_mean / y_mean
+            else:
+                self._inferred_scale = 1.0
         else:
             self._step_budgets = None
+            self._inferred_scale = 1.0
 
         # Build rate changepoint grid
         t_scaled_train = self._index_to_scaled_timearray(self._train_fh)
@@ -175,15 +181,11 @@ class ConstrainedIntegralTrend(PiecewiseLinearTrend):
         T = data["n_total"]
 
         # === Base rate from fixed integral ===
-        # S(t) is fixed data — not sampled
+        # diff gives raw rates. Normalize by inferred scale
+        # (computed in _fit from ratio of raw steps to normalized y).
         integral = self._integral_path
-        # Base rate = S(t) - S(t-1), normalized by y_max
-        # so it's in the same space as PV's normalized y
         raw_rate = jnp.diff(integral[:T], prepend=0.0)
-        if self.y_max is not None and self.y_max > 0:
-            base_rate = raw_rate / self.y_max
-        else:
-            base_rate = raw_rate
+        base_rate = raw_rate / self._inferred_scale
 
         # === Rate changepoints (sampled) ===
         delta_R = numpyro.sample(
