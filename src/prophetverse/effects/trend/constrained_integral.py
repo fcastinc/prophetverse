@@ -75,6 +75,8 @@ class ConstrainedIntegralTrend(PiecewiseLinearTrend):
         budget_window_size: int = 26,
         # Fixed integral path from stage 1
         integral_path=None,
+        # Max of raw y — for normalizing step budgets to match PV's space
+        y_max=None,
     ):
         self.rate_cp_interval = rate_cp_interval
         self.rate_cp_range = rate_cp_range
@@ -84,7 +86,11 @@ class ConstrainedIntegralTrend(PiecewiseLinearTrend):
         self.budget_constraint_enabled = budget_constraint_enabled
         self.budget_window_size = budget_window_size
         self.integral_path = integral_path
-        self._integral_path = jnp.array(integral_path, dtype=jnp.float32) if integral_path is not None else None
+        self.y_max = y_max
+        self._integral_path = (
+            jnp.array(integral_path, dtype=jnp.float32)
+            if integral_path is not None else None
+        )
         super().__init__(
             changepoint_interval=changepoint_interval,
             changepoint_range=changepoint_range,
@@ -108,17 +114,19 @@ class ConstrainedIntegralTrend(PiecewiseLinearTrend):
 
         # Compute step budgets from integral and normalize.
         # diff(integral) = raw weekly rates (same units as raw y).
-        # Divide by max(abs(diff)) to normalize — same as PV does to y.
-        # Store normalized step budgets for _model.py constraint.
+        # Divide by y_max to normalize — same operation PV does to y.
         if self._integral_path is not None:
             raw_steps = jnp.diff(self._integral_path, prepend=0.0)
-            step_scale = float(jnp.max(jnp.abs(raw_steps)))
+            # Use y_max if provided, else fall back to max(diff)
+            if self.y_max is not None:
+                step_scale = float(self.y_max)
+            else:
+                step_scale = float(jnp.max(jnp.abs(raw_steps)))
             if step_scale > 0:
                 self._step_budgets = raw_steps / step_scale
+                self._integral_path = self._integral_path / step_scale
             else:
                 self._step_budgets = raw_steps
-            # Also normalize the integral path for base_rate computation
-            self._integral_path = self._integral_path / step_scale if step_scale > 0 else self._integral_path
         else:
             self._step_budgets = None
 
