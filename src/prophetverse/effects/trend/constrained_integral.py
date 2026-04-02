@@ -112,21 +112,13 @@ class ConstrainedIntegralTrend(PiecewiseLinearTrend):
         super()._fit(y, X, scale)
         self._train_fh = y.index.get_level_values(-1).unique().sort_values()
 
-        # Compute step budgets from integral and normalize.
-        # diff(integral) = raw weekly rates (same units as raw y).
-        # Divide by y_max to normalize — same operation PV does to y.
+        # Compute step budgets from integral — keep in raw units.
+        # _model.py normalizes using raw y (which it has access to).
+        # The integral path stays raw — base_rate will be in raw units
+        # but the log-softmax only uses relative values so scale doesn't matter.
         if self._integral_path is not None:
-            raw_steps = jnp.diff(self._integral_path, prepend=0.0)
-            # Use y_max if provided, else fall back to max(diff)
-            if self.y_max is not None:
-                step_scale = float(self.y_max)
-            else:
-                step_scale = float(jnp.max(jnp.abs(raw_steps)))
-            if step_scale > 0:
-                self._step_budgets = raw_steps / step_scale
-                self._integral_path = self._integral_path / step_scale
-            else:
-                self._step_budgets = raw_steps
+            self._step_budgets = jnp.diff(
+                self._integral_path, prepend=0.0)
         else:
             self._step_budgets = None
 
