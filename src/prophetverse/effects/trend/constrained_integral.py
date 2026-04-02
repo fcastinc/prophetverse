@@ -75,8 +75,10 @@ class ConstrainedIntegralTrend(PiecewiseLinearTrend):
         budget_window_size: int = 26,
         # Fixed integral path from stage 1
         integral_path=None,
-        # Max of raw y — for normalizing step budgets to match PV's space
-        y_max=None,
+        # PV's _scale value for this series (max abs of raw y).
+        # Used to normalize step budgets and base_rate to match
+        # PV's internal space. Must match what PV computes.
+        data_scale=None,
     ):
         self.rate_cp_interval = rate_cp_interval
         self.rate_cp_range = rate_cp_range
@@ -86,7 +88,7 @@ class ConstrainedIntegralTrend(PiecewiseLinearTrend):
         self.budget_constraint_enabled = budget_constraint_enabled
         self.budget_window_size = budget_window_size
         self.integral_path = integral_path
-        self.y_max = y_max
+        self.data_scale = data_scale
         self._integral_path = (
             jnp.array(integral_path, dtype=jnp.float32)
             if integral_path is not None else None
@@ -112,21 +114,16 @@ class ConstrainedIntegralTrend(PiecewiseLinearTrend):
         super()._fit(y, X, scale)
         self._train_fh = y.index.get_level_values(-1).unique().sort_values()
 
-        # Compute step budgets and infer PV's scale.
-        # The trend receives y / _scale (normalized). The integral is raw.
-        # Infer _scale from the ratio: mean(raw_steps) / mean(y_normalized).
+        # Compute step budgets from integral.
+        # Normalize by data_scale (PV's _scale = max abs of raw y).
         if self._integral_path is not None:
             self._step_budgets = jnp.diff(
                 self._integral_path, prepend=0.0)
-            y_mean = float(jnp.abs(y.values.flatten()).mean())
-            step_mean = float(jnp.abs(self._step_budgets[1:]).mean())
-            if y_mean > 1e-10:
-                self._inferred_scale = step_mean / y_mean
-            else:
-                self._inferred_scale = 1.0
+            self._norm_scale = float(
+                self.data_scale) if self.data_scale else 1.0
         else:
             self._step_budgets = None
-            self._inferred_scale = 1.0
+            self._norm_scale = 1.0
 
         # Build rate changepoint grid
         t_scaled_train = self._index_to_scaled_timearray(self._train_fh)
@@ -181,11 +178,11 @@ class ConstrainedIntegralTrend(PiecewiseLinearTrend):
         T = data["n_total"]
 
         # === Base rate from fixed integral ===
-        # diff gives raw rates. Normalize by inferred scale
-        # (computed in _fit from ratio of raw steps to normalized y).
+        # diff gives raw rates. Normalize by data_scale
+        # (PV's _scale = max abs of raw y) to match model space.
         integral = self._integral_path
         raw_rate = jnp.diff(integral[:T], prepend=0.0)
-        base_rate = raw_rate / self._inferred_scale
+        base_rate = raw_rate / self._norm_scale
 
         # === Rate changepoints (sampled) ===
         delta_R = numpyro.sample(

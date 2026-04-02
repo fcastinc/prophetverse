@@ -135,12 +135,11 @@ def model(
                 T = len(total_flat)
 
                 # Normalize step budgets to model's internal space.
-                # Use inferred_scale from trend (computed during _fit
-                # as ratio of raw step mean to normalized y mean).
+                # Use data_scale (PV's _scale = max abs of raw y).
                 step_flat = step_budgets.flatten()
-                inf_scale = getattr(
-                    trend_model, '_inferred_scale', 1.0)
-                step_flat = step_flat / inf_scale
+                norm_scale = getattr(
+                    trend_model, '_norm_scale', 1.0)
+                step_flat = step_flat / norm_scale
 
                 # Adjust window size to divide evenly
                 n_windows = max(1, round(T / window_size))
