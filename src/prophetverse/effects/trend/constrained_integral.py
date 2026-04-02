@@ -106,24 +106,21 @@ class ConstrainedIntegralTrend(PiecewiseLinearTrend):
         super()._fit(y, X, scale)
         self._train_fh = y.index.get_level_values(-1).unique().sort_values()
 
-        # Rescale integral path to match PV's internal space.
-        # PV normalizes y by max(abs(y)) before passing to trend.
-        # For NegBinomial: y is pre-divided, scale=1. y_max ≈ 1.
-        # For Normal: y is raw, scale=max(abs(y)). y_max = scale.
-        # Either way, dividing integral by max(abs(y_raw)) aligns it.
-        # We infer y_raw max: if scale=1, y is already normalized
-        # and integral needs dividing by actual y_max (from raw data).
-        # Use: integral_scale = max(abs(y)) * scale
-        #   NegBin: max(y/S) * 1 = max(y/S) ≈ 1/S * max(y) — wrong
-        # Simpler: just use sum of first diff as proxy for weekly scale
+        # Compute step budgets from integral and normalize.
+        # diff(integral) = raw weekly rates (same units as raw y).
+        # Divide by max(abs(diff)) to normalize — same as PV does to y.
+        # Store normalized step budgets for _model.py constraint.
         if self._integral_path is not None:
-            # The integral is cumsum of raw y. The trend sees y/max(y_raw).
-            # We need integral / max(y_raw). Estimate max(y_raw) from the
-            # integral: max weekly demand ≈ max(diff(integral)).
-            diffs = jnp.diff(self._integral_path)
-            integral_scale = float(jnp.max(jnp.abs(diffs)))
-            if integral_scale > 0:
-                self._integral_path = self._integral_path / integral_scale
+            raw_steps = jnp.diff(self._integral_path, prepend=0.0)
+            step_scale = float(jnp.max(jnp.abs(raw_steps)))
+            if step_scale > 0:
+                self._step_budgets = raw_steps / step_scale
+            else:
+                self._step_budgets = raw_steps
+            # Also normalize the integral path for base_rate computation
+            self._integral_path = self._integral_path / step_scale if step_scale > 0 else self._integral_path
+        else:
+            self._step_budgets = None
 
         # Build rate changepoint grid
         t_scaled_train = self._index_to_scaled_timearray(self._train_fh)
@@ -211,8 +208,9 @@ class ConstrainedIntegralTrend(PiecewiseLinearTrend):
         # Select requested rows
         rates = rates[selection_ix]
 
-        # Expose integral for _model.py budget constraint
-        predicted_effects["latent/trend_integral"] = integral[:T][selection_ix]
+        # Expose step budgets for _model.py constraint
+        # Already normalized in _fit — same scale as model output
+        predicted_effects["latent/step_budgets"] = self._step_budgets[:T][selection_ix]
 
         # Diagnostics
         numpyro.deterministic("rate_damping_value", psi)

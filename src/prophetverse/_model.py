@@ -123,9 +123,9 @@ def model(
         # Activated by budget_constraint_enabled on the trend.
         if getattr(trend_model, 'budget_constraint_enabled', False):
             window_size = getattr(trend_model, 'budget_window_size', 26)
-            integral_selected = predicted_effects.get("latent/trend_integral")
+            step_budgets = predicted_effects.get("latent/step_budgets")
 
-            if integral_selected is not None:
+            if step_budgets is not None:
                 # Compute total model output (trend + all effects)
                 total = sum(
                     eff for name, eff in predicted_effects.items()
@@ -134,9 +134,7 @@ def model(
                 total_flat = total.flatten()
                 T = len(total_flat)
 
-                # Per-window budgets from integral differences
-                integral_with_zero = jnp.concatenate(
-                    [jnp.array([0.0]), integral_selected.flatten()])
+                step_flat = step_budgets.flatten()
 
                 # Adjust window size to divide evenly
                 n_windows = max(1, round(T / window_size))
@@ -144,17 +142,14 @@ def model(
                 usable_T = n_windows * actual_win
 
                 # Log-softmax per window
-                # log preserves ratios, softmax constrains sum
-                total_positive = jnp.maximum(total_flat[:usable_T], 1.0)
+                total_positive = jnp.maximum(total_flat[:usable_T], 1e-6)
                 log_total = jnp.log(total_positive)
                 windowed = log_total.reshape(n_windows, actual_win)
                 weights = jax.nn.softmax(windowed, axis=1)
 
-                # Budget per window
-                window_starts = jnp.arange(0, usable_T, actual_win)
-                window_ends = window_starts + actual_win
-                budgets = (integral_with_zero[window_ends]
-                           - integral_with_zero[window_starts])
+                # Budget per window = sum of step budgets
+                budgets = step_flat[:usable_T].reshape(
+                    n_windows, actual_win).sum(axis=1)
 
                 constrained = (weights * budgets[:, None]).flatten()
 
