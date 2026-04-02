@@ -123,6 +123,7 @@ class DualIntegralTrend(PiecewiseLinearTrend):
         integral_obs_distribution: str = "laplace",
         integral_obs_noise_scale: float = 1.0,
         integral_obs_subsample_stride: int = 4,
+        integral_obs_fixed_scale: bool = False,
     ):
         self.rate_cp_interval = rate_cp_interval
         self.rate_cp_range = rate_cp_range
@@ -138,6 +139,7 @@ class DualIntegralTrend(PiecewiseLinearTrend):
         self.integral_obs_distribution = integral_obs_distribution
         self.integral_obs_noise_scale = integral_obs_noise_scale
         self.integral_obs_subsample_stride = integral_obs_subsample_stride
+        self.integral_obs_fixed_scale = integral_obs_fixed_scale
         super().__init__(
             changepoint_interval=changepoint_interval,
             changepoint_range=changepoint_range,

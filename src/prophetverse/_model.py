@@ -92,12 +92,19 @@ def model(
             n_obs = len(obs_cumsum)
             sub = jnp.arange(stride - 1, n_obs, stride)
 
-            integral_noise = numpyro.sample(
-                "integral_noise_scale",
-                dist.HalfNormal(noise_prior_scale),
-            )
             mean_rate = obs_cumsum[-1] / n_obs
-            scale = integral_noise * mean_rate + 1e-6
+            fixed_scale = getattr(
+                trend_model, 'integral_obs_fixed_scale', False)
+            if fixed_scale:
+                # Fixed scale — model can't learn to loosen the constraint
+                scale = noise_prior_scale * mean_rate + 1e-6
+            else:
+                # Sampled scale (original behavior)
+                integral_noise = numpyro.sample(
+                    "integral_noise_scale",
+                    dist.HalfNormal(noise_prior_scale),
+                )
+                scale = integral_noise * mean_rate + 1e-6
             numpyro.sample(
                 "integral_obs",
                 obs_dist_cls(model_cumsum[sub], scale),
