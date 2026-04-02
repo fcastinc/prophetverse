@@ -136,11 +136,11 @@ def model(
 
                 # Normalize step budgets to model's internal space.
                 # Step budgets are diff1(integral) in raw units.
-                # Model operates in y/max(y) space. Use y to get scale.
+                # Model operates in y/max(y) space.
                 step_flat = step_budgets.flatten()
-                if y is not None:
-                    data_scale = jnp.max(jnp.abs(y)) + 1e-10
-                    step_flat = step_flat / data_scale
+                y_max = getattr(trend_model, 'y_max', None)
+                if y_max is not None and y_max > 0:
+                    step_flat = step_flat / y_max
 
                 # Adjust window size to divide evenly
                 n_windows = max(1, round(T / window_size))
