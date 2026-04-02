@@ -227,3 +227,74 @@ The integral observation (soft penalty on cumsum) is NOT the same as
 fitting directly on the cumsum. Direct fit gives R² > 0.999. Soft
 penalty gives drift and overshoot. The integral must be fit as a
 primary target, not an auxiliary constraint.
+
+## Two-Stage Post-Hoc Experiment Results (2026-04-02)
+
+### What we tried
+Two-stage pipeline:
+- Stage 1: Fit integral (cumsum) with DampedPiecewiseLinearTrendV3 + seasonality via full pipeline
+- Stage 2: Fit rate model with full NB 06 pipeline (DampedPiecewiseLinearTrendV3 + regressors + holidays + sales)
+- Post-hoc constraint: softmax or proportional scaling using stage 1 budgets
+
+### Softmax results
+- Optimal temperatures: 7000-10000 (basically uniform allocation)
+- Raw model predictions are too flat OOS — softmax has no variation to preserve
+- Budget errors: 9-37% depending on window alignment
+
+### Proportional scaling results
+- Preserves raw model pattern, adjusts level
+- Worse than softmax — amplifies noise and wrong spikes
+
+### Rolling window
+- Tried rolling windows (every position, not just non-overlapping blocks)
+- Same result — temperatures still very high, allocation still uniform
+
+### Root cause discovered
+The raw rate model (stage 2) doesn't capture spikes OOS even though:
+- Sale codes ARE in X_test (nonzero values confirmed)
+- The model fits spikes perfectly in-sample
+- The sale coefficients are learned but tiny
+
+**Why:** Without a constraint during training, the trend absorbs the spikes
+via changepoints. The sale effect coefficients stay small because the trend
+does all the work. At forecast time, the changepoints project forward
+smoothly — no spikes. The sale coefficients are too small to matter.
+
+**Comparison:** DualIntegralTrend (NB 06) captures OOS spikes because the
+integral observation constraint prevents the trend from absorbing everything.
+The constraint forces the model to use the sale effects, so the coefficients
+are larger and produce spikes OOS.
+
+### Key insight
+**The constraint must be inside the model during training, not post-hoc.**
+
+Post-hoc constraint can fix the level but cannot fix the pattern. The pattern
+(which weeks get spikes) depends on the effect coefficients, which are
+determined during training. If the training is unconstrained, the trend
+absorbs the spikes and the effects atrophy.
+
+The integral constraint serves TWO purposes:
+1. Level correction (total demand) — can be done post-hoc
+2. Effect amplification (forces model to use regressors) — MUST be during training
+
+### Possible paths forward
+
+1. **Tighter integral obs during training** — use the existing `_model.py`
+   integral obs block with much lower noise scale. Force the cumsum to match
+   tightly. The model has no choice but to use effects for spikes. This is
+   DualIntegralTrend with a tighter constraint.
+
+2. **DualIntegralTrend + post-hoc level correction** — the current model
+   captures spikes OOS. Apply proportional scaling post-hoc to fix the
+   integral drift. Pattern is right, level is adjusted.
+
+3. **Two-stage with constrained training** — fit stage 2 with the integral
+   obs block enabled (budget from stage 1 as tight prior). Effects learn
+   large coefficients because the trend can't absorb spikes.
+
+### Infrastructure improvements made
+- `panels.py`: `y_col` and `y_fillna` parameters for cumsum data
+- NB 10a rebuilt clean: single data load, two stages, tune controls
+- `load_demand_data` import path fixed
+- Backward-compatible `apply_best_params` (.get with defaults)
+- `clustering.py` label type fix
