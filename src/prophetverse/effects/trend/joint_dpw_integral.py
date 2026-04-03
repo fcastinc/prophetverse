@@ -50,9 +50,9 @@ class JointDPWIntegralTrend(PiecewiseLinearTrend):
 
     def __init__(
         self,
-        changepoint_interval: int = 26,
-        changepoint_range: float = 0.9,
-        changepoint_prior_scale: float = 0.01,
+        integral_cp_interval: int = 26,
+        integral_cp_range: float = 0.9,
+        integral_cp_prior_scale: float = 0.01,
         rate_cp_interval: int = 8,
         rate_cp_range: float = 0.95,
         rate_cp_prior_scale: float = 0.005,
@@ -90,11 +90,14 @@ class JointDPWIntegralTrend(PiecewiseLinearTrend):
         # For discrete likelihoods, y reaches _model.py in raw units while the
         # model mean is still in scaled space. Ask _model.py to normalize obs.
         self.integral_obs_scale_mode = "divide_observed_by_data_scale"
+        self.integral_cp_interval = integral_cp_interval
+        self.integral_cp_range = integral_cp_range
+        self.integral_cp_prior_scale = integral_cp_prior_scale
 
         super().__init__(
-            changepoint_interval=changepoint_interval,
-            changepoint_range=changepoint_range,
-            changepoint_prior_scale=changepoint_prior_scale,
+            changepoint_interval=integral_cp_interval,
+            changepoint_range=integral_cp_range,
+            changepoint_prior_scale=integral_cp_prior_scale,
         )
 
     def _fit(self, y, X, scale=1.0):
