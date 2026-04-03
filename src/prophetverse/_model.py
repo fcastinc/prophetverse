@@ -81,16 +81,40 @@ def model(
             y_flat = y.flatten()
             obs_cumsum = jnp.cumsum(y_flat)
 
+            obs_scale_mode = getattr(
+                trend_model, "integral_obs_scale_mode", None
+            )
+            if obs_scale_mode == "divide_observed_by_data_scale":
+                data_scale = getattr(trend_model, "_data_scale", None)
+                if data_scale is not None:
+                    if hasattr(data_scale, "values"):
+                        scale_arr = jnp.asarray(data_scale.values).reshape((-1,))
+                        if scale_arr.size == 1:
+                            obs_cumsum = obs_cumsum / scale_arr[0]
+                    else:
+                        obs_cumsum = obs_cumsum / float(data_scale)
+
             # Use trend's internal integral if available (smooth, no effects)
-            trend_integral = predicted_effects.get("latent/trend_integral")
+            use_trend_integral = getattr(
+                trend_model, "integral_obs_use_trend_integral", True
+            )
+            trend_integral = (
+                predicted_effects.get("latent/trend_integral")
+                if use_trend_integral
+                else None
+            )
             if trend_integral is not None:
                 model_cumsum = trend_integral.flatten()
             else:
-                # Fallback: cumsum of full model output
-                full_mean = sum(
-                    eff for name, eff in predicted_effects.items()
-                    if not name.startswith("latent/")
-                )
+                # Fallback: constrain the same transformed mean the target
+                # likelihood sees, not the raw pre-link sum of effects.
+                if hasattr(target_model, "_compute_mean"):
+                    full_mean = target_model._compute_mean(predicted_effects)
+                else:
+                    full_mean = sum(
+                        eff for name, eff in predicted_effects.items()
+                        if not name.startswith("latent/")
+                    )
                 model_cumsum = jnp.cumsum(full_mean.flatten())
 
             # Subsample every Nth point
