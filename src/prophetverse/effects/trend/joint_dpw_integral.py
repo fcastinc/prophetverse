@@ -46,7 +46,11 @@ class JointDPWIntegralTrend(PiecewiseLinearTrend):
     Unlike ``DualIntegralTrend``, it does not expose ``latent/trend_integral``.
     That forces ``prophetverse._model`` to use ``cumsum(trend + effects)`` for the
     integral observation, which is the object we actually care about constraining.
+
+    Supports panel (multi-series) fitting via ``broadcast_mode="effect"``.
     """
+
+    _tags = {"capability:panel": False}
 
     def __init__(
         self,

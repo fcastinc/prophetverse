@@ -324,8 +324,8 @@ class PiecewiseLinearTrend(TrendEffectMixin, BaseEffect):
         )
         offset_loc = y_array[:, 0].squeeze() - global_rate * t[0].squeeze()
 
-        global_rate = global_rate.item()
-        offset_loc = offset_loc.item()
+        global_rate = float(jnp.mean(global_rate))
+        offset_loc = float(jnp.mean(offset_loc))
 
         if self.offset_prior_loc is not None:
             offset_loc = self.offset_prior_loc
