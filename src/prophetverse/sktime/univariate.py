@@ -322,7 +322,10 @@ class Prophetverse(BaseProphetForecaster):
 
     def _get_predictive_samples_dict(self, fh, X=None):
         samples = super()._get_predictive_samples_dict(fh, X)
-        panel_samples = {k: v for k, v in samples.items() if k.startswith("panel-")}
+        panel_samples = {
+            k: v for k, v in samples.items()
+            if k.startswith("panel-") or "/panel-" in k
+        }
         for key in panel_samples:
             del samples[key]
         samples.update(group_by_suffix(panel_samples))
