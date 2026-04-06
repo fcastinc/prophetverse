@@ -3,7 +3,7 @@
 from .base import TrendEffectMixin
 from .flat import FlatTrend
 from .piecewise import PiecewiseLinearTrend, PiecewiseLogisticTrend
-from .damped_piecewise import DampedPiecewiseLinearTrendV3
+from .damped_piecewise import DampedPiecewiseLinearTrend
 from .dual_integral import DualIntegralTrend
 from .joint_dpw_integral import JointDPWIntegralTrend
 from .full_model_integral import FullModelIntegralTrend
@@ -15,7 +15,7 @@ __all__ = [
     "FlatTrend",
     "PiecewiseLinearTrend",
     "PiecewiseLogisticTrend",
-    "DampedPiecewiseLinearTrendV3",
+    "DampedPiecewiseLinearTrend",
     "DualIntegralTrend",
     "JointDPWIntegralTrend",
     "FullModelIntegralTrend",

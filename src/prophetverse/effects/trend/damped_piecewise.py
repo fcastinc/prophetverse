@@ -1,4 +1,4 @@
-"""Damped piecewise linear trend v3 — damping applied in-sample.
+"""Damped piecewise linear trend — damping applied in-sample.
 
 Fixes the v2 limitation where damping only applied at forecast time.
 In v3, each changepoint's slope contribution decays geometrically
@@ -33,10 +33,9 @@ import numpyro.distributions as dist
 
 from .piecewise import PiecewiseLinearTrend
 
-__all__ = ["DampedPiecewiseLinearTrendV3"]
+__all__ = ["DampedPiecewiseLinearTrend"]
 
-
-class DampedPiecewiseLinearTrendV3(PiecewiseLinearTrend):
+class DampedPiecewiseLinearTrend(PiecewiseLinearTrend):
     """Piecewise linear trend with in-sample damping.
 
     Each changepoint's slope decays geometrically from when it occurs.
